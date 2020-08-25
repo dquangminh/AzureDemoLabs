@@ -1,0 +1,243 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "databaseAccounts_dqminh_cosmos_sql_name": {
+            "defaultValue": "dqminh-cosmos-sql",
+            "type": "String"
+        }
+    },
+    "variables": {},
+    "resources": [
+        {
+            "type": "Microsoft.DocumentDB/databaseAccounts",
+            "apiVersion": "2020-06-01-preview",
+            "name": "[parameters('databaseAccounts_dqminh_cosmos_sql_name')]",
+            "location": "Southeast Asia",
+            "tags": {
+                "defaultExperience": "Core (SQL)"
+            },
+            "kind": "GlobalDocumentDB",
+            "properties": {
+                "publicNetworkAccess": "Enabled",
+                "enableAutomaticFailover": false,
+                "enableMultipleWriteLocations": false,
+                "isVirtualNetworkFilterEnabled": false,
+                "virtualNetworkRules": [],
+                "disableKeyBasedMetadataWriteAccess": false,
+                "enableFreeTier": false,
+                "enableAnalyticalStorage": false,
+                "createMode": "Default",
+                "databaseAccountOfferType": "Standard",
+                "consistencyPolicy": {
+                    "defaultConsistencyLevel": "Session",
+                    "maxIntervalInSeconds": 5,
+                    "maxStalenessPrefix": 100
+                },
+                "locations": [
+                    {
+                        "locationName": "Southeast Asia",
+                        "provisioningState": "Succeeded",
+                        "failoverPriority": 0,
+                        "isZoneRedundant": false
+                    }
+                ],
+                "capabilities": [],
+                "ipRules": [],
+                "backupPolicy": {
+                    "type": "Periodic",
+                    "periodicModeProperties": {
+                        "backupIntervalInMinutes": 240,
+                        "backupRetentionIntervalInHours": 8
+                    }
+                }
+            }
+        },
+        {
+            "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases",
+            "apiVersion": "2020-06-01-preview",
+            "name": "[concat(parameters('databaseAccounts_dqminh_cosmos_sql_name'), '/SchoolDB')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('databaseAccounts_dqminh_cosmos_sql_name'))]"
+            ],
+            "properties": {
+                "resource": {
+                    "id": "SchoolDB"
+                },
+                "options": {}
+            }
+        },
+        {
+            "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
+            "apiVersion": "2020-06-01-preview",
+            "name": "[concat(parameters('databaseAccounts_dqminh_cosmos_sql_name'), '/SchoolDB/StudentCourseGrades')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', parameters('databaseAccounts_dqminh_cosmos_sql_name'), 'SchoolDB')]",
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('databaseAccounts_dqminh_cosmos_sql_name'))]"
+            ],
+            "properties": {
+                "resource": {
+                    "id": "StudentCourseGrades",
+                    "indexingPolicy": {
+                        "indexingMode": "consistent",
+                        "automatic": true,
+                        "includedPaths": [
+                            {
+                                "path": "/*",
+                                "indexes": [
+                                    {
+                                        "kind": "Range",
+                                        "dataType": "Number",
+                                        "precision": -1
+                                    },
+                                    {
+                                        "kind": "Range",
+                                        "dataType": "String",
+                                        "precision": -1
+                                    }
+                                ]
+                            }
+                        ],
+                        "excludedPaths": [
+                            {
+                                "path": "/\"_etag\"/?"
+                            }
+                        ]
+                    },
+                    "partitionKey": {
+                        "paths": [
+                            "/StudentNumber"
+                        ],
+                        "kind": "Hash"
+                    },
+                    "conflictResolutionPolicy": {
+                        "mode": "LastWriterWins",
+                        "conflictResolutionPath": "/_ts"
+                    }
+                },
+                "options": {}
+            }
+        },
+        {
+            "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/storedProcedures",
+            "apiVersion": "2020-06-01-preview",
+            "name": "[concat(parameters('databaseAccounts_dqminh_cosmos_sql_name'), '/SchoolDB/StudentCourseGrades/bulkImport')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', parameters('databaseAccounts_dqminh_cosmos_sql_name'), 'SchoolDB', 'StudentCourseGrades')]",
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', parameters('databaseAccounts_dqminh_cosmos_sql_name'), 'SchoolDB')]",
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('databaseAccounts_dqminh_cosmos_sql_name'))]"
+            ],
+            "properties": {
+                "resource": {
+                    "id": "bulkImport",
+                    "body": "function bulkImport(items) {\n    var container = getContext().getCollection();\n    var containerLink = container.getSelfLink();\n\n    var count = 0;\n\n    // Validate input.\n    if (!items) throw new Error(\"The array is undefined or null.\");\n\n    var itemsLength = items.length;\n    if (itemsLength == 0) {\n        getContext().getResponse().setBody(0);\n    }\n\n    // Call the create API to create an item.\n    tryCreate(items[count], callback);\n\n    // Note that there are 2 exit conditions:\n    // 1) The createDocument request was not accepted.\n    //    In this case the callback will not be called, we just call setBody and we are done.\n    // 2) The callback was called items.length times.\n    //    In this case all items were created and we don’t need to call tryCreate anymore. Just call setBody and we are done.\n    function tryCreate(item, callback) {\n        var isAccepted = container.createDocument(containerLink, item, callback);\n\n        // If the request was accepted, callback will be called.\n        // Otherwise report current count back to the client,\n        // which will call the script again with remaining set of items.\n        if (!isAccepted) getContext().getResponse().setBody(count);\n    }\n\n    // This is called when container.createDocument is done in order to process the result.\n    function callback(err, item, options) {\n        if (err) throw err;\n\n        // One more item has been inserted, increment the count.\n        count++;\n\n        if (count >= itemsLength) {\n            // If we created all items, we are done. Just set the response.\n            getContext().getResponse().setBody(count);\n        } else {\n            // Create next document.\n            tryCreate(items[count], callback);\n        }\n    }\n}"
+                },
+                "options": {}
+            }
+        },
+        {
+            "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/storedProcedures",
+            "apiVersion": "2020-06-01-preview",
+            "name": "[concat(parameters('databaseAccounts_dqminh_cosmos_sql_name'), '/SchoolDB/StudentCourseGrades/exchangeItemsSproc')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', parameters('databaseAccounts_dqminh_cosmos_sql_name'), 'SchoolDB', 'StudentCourseGrades')]",
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', parameters('databaseAccounts_dqminh_cosmos_sql_name'), 'SchoolDB')]",
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('databaseAccounts_dqminh_cosmos_sql_name'))]"
+            ],
+            "properties": {
+                "resource": {
+                    "id": "exchangeItemsSproc",
+                    "body": "function exchangeItemsSproc (studentId1, studentId2) {\n    var collection = getContext().getCollection();\n    var response = getContext().getResponse();\n    var student1Document, student2Document;\n\n    var filterQuery =\n    {\n        'query' : 'SELECT * FROM root s WHERE s.id = @studentId1',\n        'parameters' : [{'name': '@studentId1', 'value': studentId1}]\n    };\n    // Query documents and take 1st item.\n    var isAccepted = collection.queryDocuments(\n        collection.getSelfLink(),\n        filterQuery,\n        function (err, feed, options) {\n            if (err) throw err;\n\n            if (!feed || !feed.length) {\n                response.setBody('no docs found');\n            }\n            else {\n                student1Document = feed[0];\n                var filterQuery2 =\n                {\n                    'query' : 'SELECT * FROM StudentCourseGrades s WHERE s.id = @studentId2',\n                    'parameters' : [{'name': '@studentId2', 'value': studentId2}]\n                };\n                var isAccepted2 = collection.queryDocuments(\n                    collection.getSelfLink(),\n                    filterQuery2,\n                    function (err, feed, options) {\n                        if (err) throw err;\n                \n                        if (!feed || !feed.length) {\n                            response.setBody('no docs found');\n                        }\n                        else {\n                            student2Document = feed[0];\n                            swapCourseGrades(student1Document, student2Document);\n                            response.setBody('OK done!');\n                        }\n                    \n                    }\n                );\n                \n                if (!isAccepted2) throw new Error('The query was not accepted by the server.');\n            }\n        }\n    );\n\n    if (!isAccepted) throw new Error('The query was not accepted by the server.');\n\n    function swapCourseGrades (student1, student2) {\n        var tempCourseGrades = student1.CourseGrades;\n        student1.CourseGrades = student2.CourseGrades;\n        student2.CourseGrades = tempCourseGrades;\n\n        var isAccepted = collection.replaceDocument(\n            student1Document._self,\n            student1Document,\n            function (err, docReplaced) {\n                if (err) throw err;\n\n                var isAccepted2 = collection.replaceDocument(\n                    student2Document._self,\n                    student2Document,\n                    function (err, docReplaced) {\n                        if (err) throw err;\n                    }\n                );\n\n                if (!isAccepted2) throw \"The query was not accepted by the server.\";\n            }\n        );\n\n        if (!isAccepted) throw \"The query was not accepted by the server.\";\n    }\n};"
+                },
+                "options": {}
+            }
+        },
+        {
+            "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/storedProcedures",
+            "apiVersion": "2020-06-01-preview",
+            "name": "[concat(parameters('databaseAccounts_dqminh_cosmos_sql_name'), '/SchoolDB/StudentCourseGrades/sample')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', parameters('databaseAccounts_dqminh_cosmos_sql_name'), 'SchoolDB', 'StudentCourseGrades')]",
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', parameters('databaseAccounts_dqminh_cosmos_sql_name'), 'SchoolDB')]",
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('databaseAccounts_dqminh_cosmos_sql_name'))]"
+            ],
+            "properties": {
+                "resource": {
+                    "id": "sample",
+                    "body": "// SAMPLE STORED PROCEDURE\nfunction sample(prefix) {\n    console.log(prefix);\n    var collection = getContext().getCollection();\n\n    // Query documents and take 1st item.\n    var isAccepted = collection.queryDocuments(\n        collection.getSelfLink(),\n        'SELECT * FROM root r',\n    function (err, feed, options) {\n        if (err) throw err;\n\n        // Check the feed and if empty, set the body to 'no docs found', \n        // else take 1st element from feed\n        if (!feed || !feed.length) {\n            var response = getContext().getResponse();\n            response.setBody('no docs found');\n        }\n        else {\n            var response = getContext().getResponse();\n            var body = { prefix: prefix, feed: feed[0] };\n            response.setBody(JSON.stringify(body));\n        }\n    });\n\n    if (!isAccepted) throw new Error('The query was not accepted by the server.');\n}"
+                },
+                "options": {}
+            }
+        },
+        {
+            "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings",
+            "apiVersion": "2020-06-01-preview",
+            "name": "[concat(parameters('databaseAccounts_dqminh_cosmos_sql_name'), '/SchoolDB/StudentCourseGrades/default')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', parameters('databaseAccounts_dqminh_cosmos_sql_name'), 'SchoolDB', 'StudentCourseGrades')]",
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', parameters('databaseAccounts_dqminh_cosmos_sql_name'), 'SchoolDB')]",
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('databaseAccounts_dqminh_cosmos_sql_name'))]"
+            ],
+            "properties": {
+                "resource": {
+                    "throughput": 400
+                }
+            }
+        },
+        {
+            "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/triggers",
+            "apiVersion": "2020-06-01-preview",
+            "name": "[concat(parameters('databaseAccounts_dqminh_cosmos_sql_name'), '/SchoolDB/StudentCourseGrades/updateMetadata')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', parameters('databaseAccounts_dqminh_cosmos_sql_name'), 'SchoolDB', 'StudentCourseGrades')]",
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', parameters('databaseAccounts_dqminh_cosmos_sql_name'), 'SchoolDB')]",
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('databaseAccounts_dqminh_cosmos_sql_name'))]"
+            ],
+            "properties": {
+                "resource": {
+                    "id": "updateMetadata",
+                    "body": "function updateMetadata() {\r\n    var context = getContext();\r\n    var container = context.getCollection();\r\n    var response = context.getResponse();\r\n\r\n    // item that was created\r\n    var createdItem = response.getBody();\r\n\r\n    // query for metadata document\r\n    var filterQuery = 'SELECT * FROM root r WHERE r.id = \"_metadata\"';\r\n    var accept = container.queryDocuments(container.getSelfLink(), filterQuery,\r\n        updateMetadataCallback);\r\n    if(!accept) throw \"Unable to update metadata, abort\";\r\n\r\n    function updateMetadataCallback(err, items, responseOptions) {\r\n        if(err) throw new Error(\"Error\" + err.message);\r\n\r\n        if(items.length != 1) throw 'Unable to find metadata document';\r\n\r\n        var metadataItem = items[0];\r\n\r\n        // update metadata\r\n        metadataItem.createdItems += 1;\r\n        metadataItem.createdNames += \" \" + createdItem.id;\r\n        var accept = container.replaceDocument(metadataItem._self,\r\n            metadataItem, function(err, itemReplaced) {\r\n                    if(err) throw \"Unable to update metadata, abort\";\r\n            });\r\n            \r\n        if(!accept) throw \"Unable to update metadata, abort\";\r\n        \r\n        return;\r\n    }\r\n}",
+                    "triggerOperation": "All",
+                    "triggerType": "Post"
+                },
+                "options": {}
+            }
+        },
+        {
+            "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/triggers",
+            "apiVersion": "2020-06-01-preview",
+            "name": "[concat(parameters('databaseAccounts_dqminh_cosmos_sql_name'), '/SchoolDB/StudentCourseGrades/validateStudentCourseGradeItemTimestamp')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', parameters('databaseAccounts_dqminh_cosmos_sql_name'), 'SchoolDB', 'StudentCourseGrades')]",
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', parameters('databaseAccounts_dqminh_cosmos_sql_name'), 'SchoolDB')]",
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('databaseAccounts_dqminh_cosmos_sql_name'))]"
+            ],
+            "properties": {
+                "resource": {
+                    "id": "validateStudentCourseGradeItemTimestamp",
+                    "body": "function validateStudentCourseGradeItemTimestamp() {\r\n    var context = getContext();\r\n    var request = context.getRequest();\r\n\r\n    // item to be created in the current operation\r\n    var itemToCreate = request.getBody();\r\n\r\n    // validate properties\r\n    if (!(\"timestamp\" in itemToCreate)) {\r\n        var ts = new Date();\r\n        itemToCreate[\"timestamp\"] = ts.getTime();\r\n    }\r\n\r\n    // update the item that will be created\r\n    request.setBody(itemToCreate);\r\n}",
+                    "triggerOperation": "Create",
+                    "triggerType": "Pre"
+                },
+                "options": {}
+            }
+        },
+        {
+            "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/userDefinedFunctions",
+            "apiVersion": "2020-06-01-preview",
+            "name": "[concat(parameters('databaseAccounts_dqminh_cosmos_sql_name'), '/SchoolDB/StudentCourseGrades/getStudentNumber')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', parameters('databaseAccounts_dqminh_cosmos_sql_name'), 'SchoolDB', 'StudentCourseGrades')]",
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', parameters('databaseAccounts_dqminh_cosmos_sql_name'), 'SchoolDB')]",
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('databaseAccounts_dqminh_cosmos_sql_name'))]"
+            ],
+            "properties": {
+                "resource": {
+                    "id": "getStudentNumber",
+                    "body": "function getStudentNumber(student) {\r\n    if (student.StudentNumber != undefined) {\r\n        return student.StudentNumber;\r\n    }\r\n\r\n    // if neither are present, that is an error\r\n    throw new Error(\"Document with id \" + student.id + \" does not contain StudentNumber ID in recognised format.\");\r\n}"
+                },
+                "options": {}
+            }
+        }
+    ]
+}
