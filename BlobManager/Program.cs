@@ -9,9 +9,9 @@ namespace BlobManager
 {
     class Program
     {
-        private const string blobServiceEndpoint = "https://imgstorminh.blob.core.windows.net/";
-        private const string storageAccountName = "imgstorminh";
-        private const string storageAccountKey = "5OhSdjZ8SJBugpt81db78ZqFVXf54v+N5n28rzum7FPgDi8akW6neV2CFHtmnzSOCWPhcWRjjK+MiU+W/Psksw==";
+        private const string blobServiceEndpoint = "";
+        private const string storageAccountName = "";
+        private const string storageAccountKey = "";
         
         static async Task Main(string[] args)
         {

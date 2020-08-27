@@ -1,6 +1,6 @@
 
 var config = {
-    connectionString: "AccountEndpoint=https://dqminh-cosmos-sql.documents.azure.com:443/;AccountKey=a5VapH3dpUVdExKGpClBXpM00x02tNlWv61UnmcLaj9Zj81KRdPBKBGlpTbta0ga7UuuHimIzQXzjACQLSIggw==",
+    connectionString: "",
     database: "SchoolDB",
     container: "StudentCourseGrades"
 }
