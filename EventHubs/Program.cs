@@ -5,6 +5,7 @@ using Azure.Messaging.EventHubs.Producer;
 using Azure.Messaging.EventHubs.Consumer;
 using Azure.Messaging.EventHubs.Processor;
 using Azure.Storage.Blobs;
+using System;
 
 namespace EventHubs
 {
@@ -64,7 +65,7 @@ namespace EventHubs
 
         static async Task ProcessEventHandler(ProcessEventArgs eventArgs)
         {
-            await Console.Out.WriteLineAsync("\tRecevied event: {0}", Encoding.UTF8.GetString(eventArgs.Data.Body.ToArray()));
+            Console.Out.WriteLine("\tRecevied event: {0}", Encoding.UTF8.GetString(eventArgs.Data.Body.ToArray()));
 
             // Update checkpoint in the blob storage so that the app receives only new events the next time it's run
             await eventArgs.UpdateCheckpointAsync(eventArgs.CancellationToken);
